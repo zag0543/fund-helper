@@ -337,7 +337,7 @@ def _render_sidebar_ai_config():
             st.session_state.pop("ai_advice_cache", None)
             st.rerun()
     else:
-        st.warning("未配置 AI Key", help="配置后可在「操作建议」页面使用 AI 深度分析")
+        st.warning("未配置 AI Key")
         with st.expander("配置 DeepSeek Key", expanded=False):
             api_key = st.text_input(
                 "输入 API Key",
