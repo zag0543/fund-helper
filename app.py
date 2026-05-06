@@ -332,7 +332,7 @@ def _render_sidebar_ai_config():
 
     has_key = has_deepseek_key()
     if has_key:
-        st.success("✅ AI 已就绪", help="DeepSeek API Key 已配置")
+        st.success("✅ AI 已就绪")
         if st.button("🔄 刷新 AI 缓存", key="clear_ai_cache", use_container_width=True):
             st.session_state.pop("ai_advice_cache", None)
             st.rerun()
