@@ -514,7 +514,7 @@ def render_estimate_board():
         return ""
 
     st.dataframe(
-        tbl.style.applymap(_color, subset=["估算涨跌%"]),
+        tbl.style.map(_color, subset=["估算涨跌%"]),
         use_container_width=True,
         height=400,
     )
