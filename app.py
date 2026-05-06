@@ -513,8 +513,13 @@ def render_estimate_board():
             return "color: #2ECC40"
         return ""
 
+    # 兼容 pandas 新旧版本（applymap → map）
+    styler = tbl.style
+    apply_color = getattr(styler, 'map', None) or getattr(styler, 'applymap')
+    styled = apply_color(_color, subset=["估算涨跌%"])
+
     st.dataframe(
-        tbl.style.map(_color, subset=["估算涨跌%"]),
+        styled,
         use_container_width=True,
         height=400,
     )
