@@ -1001,6 +1001,9 @@ def render_advice():
             <p>需要 <strong>DeepSeek API Key</strong>，在左侧侧边栏配置即可。</p>
         </div>
         """, unsafe_allow_html=True)
+
+
+def generate_advice(fund_name, fund_code, estimate_change, profit_pct,
                     hold_days, target_return, fund_type):
     """生成操作建议"""
     advice = {"icon": "📊", "text": "持有观望", "style": "metric-card", "warning": ""}
