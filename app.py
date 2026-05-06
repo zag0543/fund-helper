@@ -139,6 +139,24 @@ def add_holding(fund_code, fund_name, buy_amount, buy_date,
     save_holdings(df)
 
 
+def update_holding(holding_id, **kwargs):
+    """更新持仓字段，kwargs 传入要改的列名和值"""
+    df = load_holdings()
+    idx = df[df["id"] == holding_id].index
+    if len(idx) == 0:
+        return False
+    for key, val in kwargs.items():
+        if key in df.columns:
+            df.at[idx[0], key] = val
+    # 重新计算份额
+    nav = df.at[idx[0], "nav_at_buy"]
+    amount = df.at[idx[0], "buy_amount"]
+    if nav and nav > 0 and amount and amount > 0:
+        df.at[idx[0], "shares"] = amount / nav
+    save_holdings(df)
+    return True
+
+
 def delete_holding(holding_id):
     df = load_holdings()
     df = df[df["id"] != holding_id].copy()
@@ -715,9 +733,48 @@ def render_portfolio():
                         remaining = r["target_return"] - r["profit_pct"]
                         st.info(f"还差 {remaining:.2f}%")
 
-                if st.button(f"🗑️ 删除持仓", key=f"del_{r['id']}"):
-                    delete_holding(r["id"])
-                    st.rerun()
+                col_btn1, col_btn2 = st.columns(2)
+                with col_btn1:
+                    if st.button(f"✏️ 编辑", key=f"edit_{r['id']}"):
+                        st.session_state[f"editing_{r['id']}"] = True
+                        st.rerun()
+                with col_btn2:
+                    if st.button(f"🗑️ 删除", key=f"del_{r['id']}"):
+                        delete_holding(r["id"])
+                        st.rerun()
+
+                # 编辑展开面板
+                if st.session_state.get(f"editing_{r['id']}"):
+                    with st.container():
+                        st.markdown("**编辑持仓**")
+                        new_amount = st.number_input("买入金额（元）", value=float(r['buy_amount']),
+                                                     step=100.0, key=f"ea_{r['id']}")
+                        new_date = st.date_input("买入日期",
+                                                  value=datetime.strptime(r['buy_date'], "%Y-%m-%d").date(),
+                                                  key=f"ed_{r['id']}")
+                        new_target = st.slider("止盈目标（%）", 5, 50, int(r['target_return']),
+                                               key=f"et_{r['id']}")
+                        new_type = st.selectbox("基金类型", ["C类（无申购费）", "A类（有申购费）"],
+                                                 index=0 if r['fund_type'] == "C" else 1,
+                                                 key=f"ety_{r['id']}")
+                        col_s1, col_s2 = st.columns(2)
+                        with col_s1:
+                            if st.button("✅ 保存", key=f"save_{r['id']}", type="primary"):
+                                update_holding(
+                                    r['id'],
+                                    buy_amount=new_amount,
+                                    buy_date=new_date.strftime("%Y-%m-%d"),
+                                    target_return=new_target,
+                                    fund_type="C" if "C类" in new_type else "A",
+                                )
+                                st.session_state.pop(f"editing_{r['id']}")
+                                _clear_estimate_cache()
+                                st.success("已更新")
+                                st.rerun()
+                        with col_s2:
+                            if st.button("取消", key=f"cancel_{r['id']}"):
+                                st.session_state.pop(f"editing_{r['id']}")
+                                st.rerun()
                 st.markdown("---")
 
         # 持仓占比饼图
