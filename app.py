@@ -39,7 +39,14 @@ WATCHLIST_FILE = DATA_DIR / "watchlist.json"
 
 
 def _gist_config():
-    """获取当前 session 的 Gist 配置"""
+    """获取 Gist 配置，优先从 st.secrets（服务端），其次从 session_state（浏览器）"""
+    try:
+        token = st.secrets.get("GITHUB_TOKEN", "")
+        gist_id = st.secrets.get("GIST_ID", "")
+        if token and gist_id:
+            return token, gist_id
+    except Exception:
+        pass
     token = st.session_state.get("github_token", "")
     gist_id = st.session_state.get("gist_id", "")
     return token, gist_id
@@ -438,6 +445,16 @@ def _render_sidebar_gist_config():
     status = st.session_state.get("gist_status", "")
     if status:
         st.caption(status)
+
+    # 检查是否由服务端 Secrets 配置
+    try:
+        has_server_config = bool(st.secrets.get("GITHUB_TOKEN")) and bool(st.secrets.get("GIST_ID"))
+    except Exception:
+        has_server_config = False
+
+    if has_server_config:
+        st.success("✅ 云端同步已就绪（管理员配置）")
+        return
 
     token, gist_id = _gist_config()
     configured = bool(token) and bool(gist_id)
