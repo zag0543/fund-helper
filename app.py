@@ -19,6 +19,7 @@ from utils.ai_advice import (
     generate_ai_advice, get_api_key as get_deepseek_key,
     has_api_key as has_deepseek_key,
 )
+from utils import gist_sync
 
 # ============== 页面配置 ==============
 st.set_page_config(
@@ -35,6 +36,57 @@ WATCHLIST_FILE = DATA_DIR / "watchlist.json"
 
 # ============== 缓存层 ==============
 # 避免同一次 Session 内对同一基金代码重复请求 API
+
+
+def _gist_config():
+    """获取当前 session 的 Gist 配置"""
+    token = st.session_state.get("github_token", "")
+    gist_id = st.session_state.get("gist_id", "")
+    return token, gist_id
+
+
+def _is_gist_ready():
+    token, gist_id = _gist_config()
+    return bool(token) and bool(gist_id)
+
+
+def _pull_from_gist():
+    """启动时从 Gist 拉取数据覆盖本地"""
+    if not _is_gist_ready():
+        return
+    token, gist_id = _gist_config()
+    holdings, watchlist, err = gist_sync.load_from_gist(token, gist_id)
+    if err:
+        st.session_state["gist_status"] = f"⚠️ 拉取失败: {err[:60]}"
+        return
+    if holdings is not None:
+        _save_df_to_json(HOLDINGS_FILE, pd.DataFrame(holdings))
+        st.session_state["_holdings_df"] = pd.DataFrame(holdings)
+    if watchlist is not None:
+        _save_df_to_json(WATCHLIST_FILE, pd.DataFrame(watchlist))
+        st.session_state["_watchlist_df"] = pd.DataFrame(watchlist)
+    st.session_state["gist_status"] = "✅ 已从云端恢复数据"
+    st.session_state["_data_checked"] = True
+
+
+def _push_to_gist():
+    """保存后同步到 Gist（静默，不阻塞用户）"""
+    if not _is_gist_ready():
+        return
+    token, gist_id = _gist_config()
+    holdings = load_holdings()
+    watchlist = load_watchlist()
+    ok, msg = gist_sync.save_to_gist(
+        token, gist_id,
+        holdings.to_dict("records") if not holdings.empty else [],
+        watchlist.to_dict("records") if not watchlist.empty else [],
+    )
+    if ok:
+        st.session_state["gist_status"] = (
+            f"✅ 已同步 {datetime.now().strftime('%H:%M')}"
+        )
+    else:
+        st.session_state["gist_status"] = f"⚠️ 同步失败: {msg[:60]}"
 
 
 def _get_estimate_cached(fund_code, cache_ttl=120):
@@ -112,6 +164,7 @@ def save_holdings(df):
     st.session_state["_holdings_df"] = df.copy()
     st.session_state["_data_checked"] = not df.empty
     _save_df_to_json(HOLDINGS_FILE, df)
+    _push_to_gist()
 
 
 def add_holding(fund_code, fund_name, buy_amount, buy_date,
@@ -177,6 +230,7 @@ def save_watchlist(df):
     st.session_state["_watchlist_df"] = df.copy()
     st.session_state["_data_checked"] = not df.empty
     _save_df_to_json(WATCHLIST_FILE, df)
+    _push_to_gist()
 
 
 def add_to_watchlist(fund_code, fund_name):
@@ -375,6 +429,91 @@ def _render_sidebar_ai_config():
                 "Key 仅保存在当前浏览器 session 中，关闭页面后需重新输入。"
                 "也可在 .streamlit/secrets.toml 中配置。"
             )
+
+
+def _render_sidebar_gist_config():
+    """侧边栏 GitHub Gist 同步配置"""
+    st.subheader("☁️ 云端同步")
+
+    status = st.session_state.get("gist_status", "")
+    if status:
+        st.caption(status)
+
+    token, gist_id = _gist_config()
+    configured = bool(token) and bool(gist_id)
+
+    if configured:
+        st.success("✅ 自动备份已开启")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🔄 手动拉取", use_container_width=True, key="gist_pull"):
+                with st.spinner("拉取中..."):
+                    holdings, watchlist, err = gist_sync.load_from_gist(token, gist_id)
+                if err:
+                    st.error(f"拉取失败: {err[:50]}")
+                else:
+                    if holdings is not None:
+                        save_holdings(pd.DataFrame(holdings))
+                    if watchlist is not None:
+                        save_watchlist(pd.DataFrame(watchlist))
+                    st.success("已从云端恢复")
+                    st.rerun()
+        with col2:
+            if st.button("🗑️ 断开连接", use_container_width=True, key="gist_disconnect"):
+                st.session_state.pop("github_token", None)
+                st.session_state.pop("gist_id", None)
+                st.session_state.pop("gist_status", None)
+                st.rerun()
+        return
+
+    with st.expander("配置 GitHub Gist", expanded=not configured):
+        st.caption(
+            "需要 GitHub Token（勾选 gist 权限）："
+            "[创建 Token](https://github.com/settings/tokens/new?scopes=gist)"
+        )
+        token_input = st.text_input(
+            "GitHub Token",
+            type="password",
+            placeholder="ghp_...",
+            label_visibility="collapsed",
+            key="gist_token_input",
+        )
+        gist_input = st.text_input(
+            "Gist ID（可选，留空自动创建）",
+            placeholder="留空自动创建",
+            label_visibility="collapsed",
+            key="gist_id_input",
+        )
+
+        if st.button("🔗 连接并启用同步", type="primary", use_container_width=True):
+            if not token_input.startswith("ghp_") and not token_input.startswith("github_pat_"):
+                st.error("Token 格式不正确")
+                return
+
+            valid, login = gist_sync.test_connection(token_input)
+            if not valid:
+                st.error("Token 无效，请检查")
+                return
+
+            gid = gist_input.strip()
+            if gid:
+                st.session_state["github_token"] = token_input
+                st.session_state["gist_id"] = gid
+            else:
+                with st.spinner("正在创建 Gist..."):
+                    gid, err = gist_sync.create_gist(token_input)
+                if err:
+                    st.error(f"创建失败: {err[:60]}")
+                    return
+                st.session_state["github_token"] = token_input
+                st.session_state["gist_id"] = gid
+                st.info(f"已创建 Gist: {gid}")
+
+            st.session_state["gist_status"] = f"✅ 已连接 ({login})"
+            _pull_from_gist()
+            st.success("连接成功，数据已同步！")
+            st.rerun()
 
 
 def _render_sidebar_reminder():
@@ -1154,6 +1293,10 @@ def main():
     # 初始化数据
     _init_data_files()
 
+    # ---- 如果配了 Gist，优先从云端拉取 ----
+    if _is_gist_ready():
+        _pull_from_gist()
+
     # ---- 首次使用 / 数据丢失 → 导入引导 ----
     if not _has_data():
         _render_import_guide()
@@ -1175,6 +1318,8 @@ def main():
         _render_sidebar_quick_add()
         st.markdown("---")
         _render_sidebar_ai_config()
+        st.markdown("---")
+        _render_sidebar_gist_config()
         st.markdown("---")
         _render_sidebar_reminder()
         _render_disclaimer()
